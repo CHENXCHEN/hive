@@ -32,6 +32,12 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.FileUtils;
 import org.apache.hadoop.hive.io.HiveIOExceptionHandlerUtil;
+import org.apache.hadoop.hive.ql.io.orc.OrcInputFormat;
+import org.apache.hadoop.hive.ql.io.orc.OrcOutputFormat;
+import org.apache.hadoop.hive.ql.io.orc.OrcSerde;
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.FileInputFormat;
@@ -43,6 +49,10 @@ import org.apache.hadoop.mapred.JobConfigurable;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.TextInputFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import static org.apache.hadoop.hive.serde.serdeConstants.SERIALIZATION_LIB;
 
 /**
  * Symlink file is a text file which contains a list of filename / dirname.
@@ -54,6 +64,8 @@ import org.apache.hadoop.mapred.TextInputFormat;
 public class SymlinkTextInputFormat extends SymbolicInputFormat implements
     InputFormat<LongWritable, Text>, JobConfigurable,
     ContentSummaryInputFormat, ReworkMapredInputFormat {
+  private static final String CLASS_NAME = SymlinkTextInputFormat.class.getName();
+  public static final Logger LOG = LoggerFactory.getLogger(CLASS_NAME);
   /**
    * This input split wraps the FileSplit generated from
    * TextInputFormat.getSplits(), while setting the original link file path
@@ -100,10 +112,20 @@ public class SymlinkTextInputFormat extends SymbolicInputFormat implements
     InputSplit targetSplit = ((SymlinkTextInputSplit)split).getTargetSplit();
 
     // The target data is in TextInputFormat.
-    TextInputFormat inputFormat = new TextInputFormat();
-    inputFormat.configure(job);
+    InputFormat inputFormat = new TextInputFormat();
+    ((JobConfigurable) inputFormat).configure(job);
     RecordReader innerReader = null;
     try {
+      String serde = job.get(SERIALIZATION_LIB);
+      if (ParquetHiveSerDe.class.getName().equals(serde)) {
+        job.setInputFormat(MapredParquetInputFormat.class);
+        job.setOutputFormat(MapredParquetOutputFormat.class);
+        inputFormat = new MapredParquetInputFormat();
+      } else if (OrcSerde.class.getName().equals(serde)) {
+        job.setInputFormat(OrcInputFormat.class);
+        job.setOutputFormat(OrcOutputFormat.class);
+        inputFormat = new OrcInputFormat();
+      }
       innerReader = inputFormat.getRecordReader(targetSplit, job,
           reporter);
     } catch (Exception e) {
@@ -146,10 +168,21 @@ public class SymlinkTextInputFormat extends SymbolicInputFormat implements
     }
 
     // The input should be in TextInputFormat.
-    TextInputFormat inputFormat = new TextInputFormat();
+    InputFormat inputFormat = new TextInputFormat();
     JobConf newjob = new JobConf(job);
     newjob.setInputFormat(TextInputFormat.class);
-    inputFormat.configure(newjob);
+    ((JobConfigurable) inputFormat).configure(newjob);
+
+    String serde = job.get(SERIALIZATION_LIB);
+    if (ParquetHiveSerDe.class.getName().equals(serde)) {
+      newjob.setInputFormat(MapredParquetInputFormat.class);
+      newjob.setOutputFormat(MapredParquetOutputFormat.class);
+      inputFormat = new MapredParquetInputFormat();
+    } else if (OrcSerde.class.getName().equals(serde)) {
+      newjob.setInputFormat(OrcInputFormat.class);
+      newjob.setOutputFormat(OrcOutputFormat.class);
+      inputFormat = new OrcInputFormat();
+    }
 
     List<InputSplit> result = new ArrayList<InputSplit>();
 
